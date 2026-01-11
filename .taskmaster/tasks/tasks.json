@@ -1,0 +1,149 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "Initialize Next.js project with TypeScript and dependencies",
+        "description": "Set up Next.js 14+ with App Router, TypeScript, and install core dependencies including onnxruntime-web, shadcn/ui, TailwindCSS, and OpenCV.js",
+        "details": "1. Initialize Next.js project with TypeScript: `npx create-next-app@latest . --typescript --tailwind --app --no-src-dir --import-alias '@/*'`\n2. Install ONNX Runtime Web: `npm install onnxruntime-web`\n3. Install OpenCV.js: `npm install opencv-ts` or add via CDN in public/\n4. Initialize shadcn/ui: `npx shadcn-ui@latest init` (select defaults: New York style, Slate color, CSS variables)\n5. Install shadcn components needed: `npx shadcn-ui@latest add button select switch slider label card`\n6. Configure next.config.js to handle WASM files:\n   ```javascript\n   module.exports = {\n     webpack: (config) => {\n       config.experiments = { ...config.experiments, asyncWebAssembly: true };\n       config.module.rules.push({\n         test: /\\.wasm$/,\n         type: 'webassembly/async'\n       });\n       return config;\n     }\n   };\n   ```\n7. Create directory structure: `mkdir -p public/models public/data app/components app/lib app/utils`\n8. Create package.json scripts for development and build",
+        "testStrategy": "1. Verify Next.js dev server starts: `npm run dev`\n2. Verify no TypeScript errors\n3. Check that shadcn/ui components render correctly by creating a test page\n4. Verify WASM support by checking webpack config output\n5. Confirm all dependencies installed: `npm list onnxruntime-web opencv-ts`",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-11T06:52:01.150Z"
+      },
+      {
+        "id": "2",
+        "title": "Export YOLOv11 models to ONNX format",
+        "description": "Convert YOLOv11-N, YOLOv11-S, and YOLOv11-M pretrained models from PyTorch to ONNX format with proper configuration for browser inference",
+        "details": "1. Create Python script `scripts/export_models.py`:\n   ```python\n   from ultralytics import YOLO\n   \n   models = ['yolo11n', 'yolo11s', 'yolo11m']\n   for model_name in models:\n       model = YOLO(f\"{model_name}.pt\")\n       model.export(\n           format='onnx',\n           imgsz=640,\n           opset=12,\n           dynamic=False,\n           simplify=True,\n           nms=False,  # Handle NMS in browser\n           half=False  # Use FP32 for WASM compatibility\n       )\n   ```\n2. Run export script to generate .onnx files\n3. Move exported models to `public/models/` directory\n4. Create model metadata JSON at `public/data/models.json`:\n   ```json\n   {\n     \"models\": [\n       {\"id\": \"yolo11n\", \"name\": \"YOLOv11-Nano\", \"path\": \"/models/yolo11n.onnx\", \"params\": \"2.6M\", \"description\": \"Fastest, optimized for real-time\"},\n       {\"id\": \"yolo11s\", \"name\": \"YOLOv11-Small\", \"path\": \"/models/yolo11s.onnx\", \"params\": \"9M\", \"description\": \"Balanced speed and accuracy\"},\n       {\"id\": \"yolo11m\", \"name\": \"YOLOv11-Medium\", \"path\": \"/models/yolo11m.onnx\", \"params\": \"20M\", \"description\": \"Higher accuracy, slower\"}\n     ]\n   }\n   ```\n5. Create COCO class labels file at `public/data/coco_classes.json` with all 80 COCO class names",
+        "testStrategy": "1. Verify ONNX files are created without errors\n2. Check file sizes are reasonable (yolo11n.onnx ~6MB, yolo11m.onnx ~40MB)\n3. Verify opset version is 12 using `onnx.checker` or Netron visualizer\n4. Confirm input shape is [1, 3, 640, 640] and output shape inspection\n5. Test loading one model in a simple Node.js script with onnxruntime-node to ensure validity",
+        "priority": "high",
+        "dependencies": [
+          "1"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "3",
+        "title": "Implement ONNX model loader with WebGPU/WASM fallback",
+        "description": "Create model loading utility that initializes ONNX Runtime sessions with automatic WebGPU detection and WASM fallback",
+        "details": "1. Create `app/lib/onnx-loader.ts`:\n   ```typescript\n   import * as ort from 'onnxruntime-web';\n   \n   export async function loadModel(modelPath: string): Promise<ort.InferenceSession> {\n     // Configure ONNX Runtime environment\n     ort.env.wasm.numThreads = 4;\n     ort.env.wasm.simd = true;\n     ort.env.wasm.proxy = true;\n     \n     // Attempt WebGPU first, fallback to WASM\n     const executionProviders: ort.InferenceSession.ExecutionProviderConfig[] = [];\n     \n     if ('gpu' in navigator) {\n       try {\n         executionProviders.push('webgpu');\n       } catch (e) {\n         console.warn('WebGPU not available, using WASM');\n       }\n     }\n     executionProviders.push('wasm');\n     \n     const session = await ort.InferenceSession.create(modelPath, {\n       executionProviders\n     });\n     \n     return session;\n   }\n   \n   export function getModelInfo(session: ort.InferenceSession) {\n     return {\n       inputNames: session.inputNames,\n       outputNames: session.outputNames,\n       inputShape: session.inputNames[0] ? session.inputMetadata[session.inputNames[0]].dims : null\n     };\n   }\n   ```\n2. Create model manager hook at `app/hooks/useModelLoader.ts` to handle loading state and model switching\n3. Add loading states and error handling",
+        "testStrategy": "1. Test loading each model size and verify session creation\n2. Verify WebGPU detection works on supported browsers (Chrome with flag)\n3. Test fallback to WASM when WebGPU unavailable\n4. Verify model metadata extraction (input/output names and shapes)\n5. Test error handling for invalid model paths\n6. Measure and log loading times for each model",
+        "priority": "high",
+        "dependencies": [
+          "2"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "4",
+        "title": "Implement webcam capture and video stream management",
+        "description": "Create video capture component using MediaDevices API with getUserMedia for accessing webcam and rendering video stream",
+        "details": "1. Create `app/components/VideoCapture.tsx`:\n   ```typescript\n   'use client';\n   import { useEffect, useRef, useState } from 'react';\n   \n   export function VideoCapture({ onVideoReady }: { onVideoReady: (video: HTMLVideoElement) => void }) {\n     const videoRef = useRef<HTMLVideoElement>(null);\n     const [error, setError] = useState<string | null>(null);\n     \n     useEffect(() => {\n       async function initCamera() {\n         try {\n           const stream = await navigator.mediaDevices.getUserMedia({\n             video: { width: 1280, height: 720, facingMode: 'user' }\n           });\n           \n           if (videoRef.current) {\n             videoRef.current.srcObject = stream;\n             await videoRef.current.play();\n             videoRef.current.addEventListener('loadeddata', () => {\n               onVideoReady(videoRef.current!);\n             });\n           }\n         } catch (err) {\n           setError('Camera access denied or unavailable');\n         }\n       }\n       \n       initCamera();\n       \n       return () => {\n         const stream = videoRef.current?.srcObject as MediaStream;\n         stream?.getTracks().forEach(track => track.stop());\n       };\n     }, [onVideoReady]);\n     \n     return (\n       <div className=\"relative\">\n         <video ref={videoRef} className=\"w-full h-auto\" playsInline />\n         {error && <div className=\"text-red-500\">{error}</div>}\n       </div>\n     );\n   }\n   ```\n2. Add canvas overlay component for drawing detections\n3. Handle cleanup on unmount to stop video tracks",
+        "testStrategy": "1. Test camera permission prompt appears\n2. Verify video stream renders correctly\n3. Test video dimensions match requested resolution\n4. Verify video stops when component unmounts\n5. Test error handling when camera denied\n6. Check that onVideoReady callback fires with valid video element",
+        "priority": "high",
+        "dependencies": [
+          "1"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "5",
+        "title": "Implement image preprocessing pipeline with OpenCV.js",
+        "description": "Create preprocessing utilities using OpenCV.js for letterbox resizing, BGR conversion, normalization to prepare video frames for YOLO model input",
+        "details": "1. Load OpenCV.js in `app/lib/opencv-loader.ts` with proper initialization check\n2. Create `app/lib/preprocess.ts`:\n   ```typescript\n   declare const cv: any;\n   \n   export interface PreprocessResult {\n     tensor: Float32Array;\n     scale: number;\n     padX: number;\n     padY: number;\n     originalWidth: number;\n     originalHeight: number;\n   }\n   \n   export function preprocessImage(\n     video: HTMLVideoElement,\n     canvas: HTMLCanvasElement,\n     modelWidth = 640,\n     modelHeight = 640\n   ): PreprocessResult {\n     const ctx = canvas.getContext('2d')!;\n     canvas.width = video.videoWidth;\n     canvas.height = video.videoHeight;\n     ctx.drawImage(video, 0, 0);\n     \n     // Read into OpenCV Mat\n     const mat = cv.imread(canvas);\n     const matC3 = new cv.Mat();\n     cv.cvtColor(mat, matC3, cv.COLOR_RGBA2BGR);\n     mat.delete();\n     \n     // Letterbox resize\n     const maxSize = Math.max(matC3.rows, matC3.cols);\n     const yPad = maxSize - matC3.rows;\n     const xPad = maxSize - matC3.cols;\n     const matPad = new cv.Mat();\n     cv.copyMakeBorder(matC3, matPad, 0, yPad, 0, xPad, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0));\n     matC3.delete();\n     \n     // Resize to model input size\n     const matResized = new cv.Mat();\n     cv.resize(matPad, matResized, new cv.Size(modelWidth, modelHeight));\n     matPad.delete();\n     \n     // Convert to blob (normalized float32)\n     const inputBlob = cv.blobFromImage(\n       matResized,\n       1/255.0,\n       new cv.Size(modelWidth, modelHeight),\n       new cv.Scalar(0, 0, 0),\n       true,\n       false\n     );\n     matResized.delete();\n     \n     const tensorData = new Float32Array(inputBlob.data32F);\n     inputBlob.delete();\n     \n     return {\n       tensor: tensorData,\n       scale: modelWidth / maxSize,\n       padX: xPad,\n       padY: yPad,\n       originalWidth: video.videoWidth,\n       originalHeight: video.videoHeight\n     };\n   }\n   ```",
+        "testStrategy": "1. Test preprocessing on sample video frame\n2. Verify output tensor shape is [1, 3, 640, 640]\n3. Verify pixel values normalized to [0, 1] range\n4. Test letterbox padding for various aspect ratios\n5. Verify BGR color conversion\n6. Check memory cleanup (no Mat leaks)\n7. Measure preprocessing time (should be <10ms)",
+        "priority": "high",
+        "dependencies": [
+          "4"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "6",
+        "title": "Implement YOLO inference pipeline",
+        "description": "Create inference function that runs preprocessed frames through ONNX model and extracts raw detection outputs",
+        "details": "1. Create `app/lib/inference.ts`:\n   ```typescript\n   import * as ort from 'onnxruntime-web';\n   \n   export interface RawDetection {\n     classId: number;\n     confidence: number;\n     cx: number;\n     cy: number;\n     width: number;\n     height: number;\n   }\n   \n   export async function runInference(\n     session: ort.InferenceSession,\n     tensorData: Float32Array,\n     confThreshold = 0.25\n   ): Promise<RawDetection[]> {\n     // Create input tensor [1, 3, 640, 640]\n     const inputTensor = new ort.Tensor('float32', tensorData, [1, 3, 640, 640]);\n     \n     // Run inference\n     const feeds = { [session.inputNames[0]]: inputTensor };\n     const results = await session.run(feeds);\n     \n     // Parse output tensor\n     const outputTensor = results[session.outputNames[0]];\n     const outputData = outputTensor.data as Float32Array;\n     const [, numBoxes, numValues] = outputTensor.dims;\n     \n     const detections: RawDetection[] = [];\n     \n     // Parse each detection [cx, cy, w, h, ...class_scores]\n     for (let i = 0; i < numBoxes; i++) {\n       const offset = i * numValues;\n       const cx = outputData[offset];\n       const cy = outputData[offset + 1];\n       const width = outputData[offset + 2];\n       const height = outputData[offset + 3];\n       \n       // Find best class\n       let maxScore = 0;\n       let maxClassId = 0;\n       for (let j = 4; j < numValues; j++) {\n         const score = outputData[offset + j];\n         if (score > maxScore) {\n           maxScore = score;\n           maxClassId = j - 4;\n         }\n       }\n       \n       if (maxScore >= confThreshold && width > 0 && height > 0) {\n         detections.push({\n           classId: maxClassId,\n           confidence: maxScore,\n           cx, cy, width, height\n         });\n       }\n     }\n     \n     return detections;\n   }\n   ```\n2. Add performance timing to track inference latency",
+        "testStrategy": "1. Test inference on preprocessed sample frame\n2. Verify output parsing handles correct tensor shape\n3. Test confidence thresholding filters low-confidence detections\n4. Verify class ID extraction and score calculation\n5. Measure inference time for each model size\n6. Test with different confidence thresholds (0.1, 0.25, 0.5)",
+        "priority": "high",
+        "dependencies": [
+          "3",
+          "5"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "7",
+        "title": "Implement Non-Maximum Suppression (NMS) algorithm",
+        "description": "Create NMS post-processing function to filter overlapping detections with IoU-based suppression applied per class",
+        "details": "1. Create `app/lib/nms.ts`:\n   ```typescript\n   import { RawDetection } from './inference';\n   \n   export interface Detection extends RawDetection {\n     x1: number;\n     y1: number;\n     x2: number;\n     y2: number;\n   }\n   \n   function calculateIoU(box1: Detection, box2: Detection): number {\n     const intersectX1 = Math.max(box1.x1, box2.x1);\n     const intersectY1 = Math.max(box1.y1, box2.y1);\n     const intersectX2 = Math.min(box1.x2, box2.x2);\n     const intersectY2 = Math.min(box1.y2, box2.y2);\n     \n     const intersectArea = Math.max(0, intersectX2 - intersectX1) * Math.max(0, intersectY2 - intersectY1);\n     const box1Area = (box1.x2 - box1.x1) * (box1.y2 - box1.y1);\n     const box2Area = (box2.x2 - box2.x1) * (box2.y2 - box2.y1);\n     const unionArea = box1Area + box2Area - intersectArea;\n     \n     return intersectArea / unionArea;\n   }\n   \n   export function applyNMS(\n     detections: RawDetection[],\n     iouThreshold = 0.45\n   ): Detection[] {\n     // Convert to corner coordinates\n     const boxes: Detection[] = detections.map(det => ({\n       ...det,\n       x1: det.cx - det.width / 2,\n       y1: det.cy - det.height / 2,\n       x2: det.cx + det.width / 2,\n       y2: det.cy + det.height / 2\n     }));\n     \n     // Group by class\n     const classBuckets = new Map<number, Detection[]>();\n     boxes.forEach(box => {\n       if (!classBuckets.has(box.classId)) {\n         classBuckets.set(box.classId, []);\n       }\n       classBuckets.get(box.classId)!.push(box);\n     });\n     \n     const result: Detection[] = [];\n     \n     // Apply NMS per class\n     classBuckets.forEach((classBoxes) => {\n       classBoxes.sort((a, b) => b.confidence - a.confidence);\n       \n       const keep: Detection[] = [];\n       while (classBoxes.length > 0) {\n         const best = classBoxes.shift()!;\n         keep.push(best);\n         \n         classBoxes = classBoxes.filter(box => {\n           const iou = calculateIoU(best, box);\n           return iou <= iouThreshold;\n         });\n       }\n       \n       result.push(...keep);\n     });\n     \n     return result;\n   }\n   ```",
+        "testStrategy": "1. Test IoU calculation with known overlapping boxes\n2. Verify NMS removes high-overlap boxes correctly\n3. Test per-class NMS doesn't suppress different classes\n4. Test with various IoU thresholds (0.3, 0.45, 0.6)\n5. Verify edge cases (no detections, single detection)\n6. Test performance with large number of detections (1000+)",
+        "priority": "high",
+        "dependencies": [
+          "6"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "8",
+        "title": "Implement coordinate transformation and post-processing",
+        "description": "Create utilities to transform detection coordinates from model space back to original video frame coordinates, accounting for letterbox padding and scaling",
+        "details": "1. Create `app/lib/postprocess.ts`:\n   ```typescript\n   import { Detection } from './nms';\n   import { PreprocessResult } from './preprocess';\n   \n   export interface FinalDetection {\n     classId: number;\n     className: string;\n     confidence: number;\n     x: number;\n     y: number;\n     width: number;\n     height: number;\n   }\n   \n   export function transformCoordinates(\n     detections: Detection[],\n     preprocessInfo: PreprocessResult,\n     classNames: string[],\n     allowedClasses?: Set<number>\n   ): FinalDetection[] {\n     const { scale, originalWidth, originalHeight } = preprocessInfo;\n     \n     return detections\n       .filter(det => !allowedClasses || allowedClasses.has(det.classId))\n       .map(det => {\n         // Clamp to valid content area (before padding)\n         const x1 = Math.max(0, det.x1);\n         const y1 = Math.max(0, det.y1);\n         const x2 = Math.min(640, det.x2);\n         const y2 = Math.min(640, det.y2);\n         \n         // Transform back to original coordinates\n         const origX = x1 / scale;\n         const origY = y1 / scale;\n         const origW = (x2 - x1) / scale;\n         const origH = (y2 - y1) / scale;\n         \n         // Clamp to video bounds\n         const finalX = Math.max(0, Math.min(origX, originalWidth));\n         const finalY = Math.max(0, Math.min(origY, originalHeight));\n         const finalW = Math.min(origW, originalWidth - finalX);\n         const finalH = Math.min(origH, originalHeight - finalY);\n         \n         return {\n           classId: det.classId,\n           className: classNames[det.classId] || `class_${det.classId}`,\n           confidence: det.confidence,\n           x: finalX,\n           y: finalY,\n           width: finalW,\n           height: finalH\n         };\n       });\n   }\n   ```\n2. Add class name loading utility from coco_classes.json\n3. Implement class filtering logic",
+        "testStrategy": "1. Test coordinate transformation with known input/output pairs\n2. Verify scaling works correctly for various aspect ratios\n3. Test clamping to original video bounds\n4. Verify class filtering includes/excludes correct classes\n5. Test class name mapping from ID to string\n6. Test edge cases (boxes at boundaries, zero-size boxes)",
+        "priority": "medium",
+        "dependencies": [
+          "7"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "9",
+        "title": "Implement detection visualization and canvas rendering",
+        "description": "Create rendering functions to draw bounding boxes, labels, confidence scores, and FPS counter on canvas overlay",
+        "details": "1. Create `app/lib/visualize.ts`:\n   ```typescript\n   import { FinalDetection } from './postprocess';\n   \n   const CLASS_COLORS: Record<number, string> = {\n     0: '#FF6B6B',  // person - red\n     2: '#4ECDC4',  // car - teal\n     5: '#45B7D1',  // bus - blue\n     7: '#96CEB4',  // truck - green\n     1: '#FFEAA7',  // bicycle - yellow\n   };\n   \n   export function drawDetections(\n     canvas: HTMLCanvasElement,\n     detections: FinalDetection[],\n     fps?: number\n   ) {\n     const ctx = canvas.getContext('2d')!;\n     ctx.clearRect(0, 0, canvas.width, canvas.height);\n     \n     // Draw each detection\n     detections.forEach(det => {\n       const color = CLASS_COLORS[det.classId] || '#00FF00';\n       \n       // Draw bounding box\n       ctx.strokeStyle = color;\n       ctx.lineWidth = 3;\n       ctx.strokeRect(det.x, det.y, det.width, det.height);\n       \n       // Draw label background\n       const label = `${det.className}: ${(det.confidence * 100).toFixed(1)}%`;\n       ctx.font = '16px Arial';\n       const textMetrics = ctx.measureText(label);\n       const textHeight = 20;\n       const padding = 4;\n       \n       const labelY = det.y > textHeight ? det.y - textHeight : det.y + det.height + textHeight;\n       \n       ctx.fillStyle = color;\n       ctx.fillRect(\n         det.x,\n         labelY - textHeight + padding,\n         textMetrics.width + padding * 2,\n         textHeight\n       );\n       \n       // Draw label text\n       ctx.fillStyle = '#000000';\n       ctx.fillText(label, det.x + padding, labelY);\n     });\n     \n     // Draw FPS counter\n     if (fps !== undefined) {\n       ctx.font = 'bold 24px Arial';\n       ctx.fillStyle = '#FFFF00';\n       ctx.strokeStyle = '#000000';\n       ctx.lineWidth = 2;\n       const fpsText = `FPS: ${fps.toFixed(1)}`;\n       ctx.strokeText(fpsText, 10, 30);\n       ctx.fillText(fpsText, 10, 30);\n     }\n   }\n   ```\n2. Add screenshot function using canvas.toBlob()\n3. Add video recording using MediaRecorder and canvas.captureStream()",
+        "testStrategy": "1. Test drawing on canvas with mock detections\n2. Verify bounding boxes render at correct positions\n3. Verify labels display with correct class names and confidence\n4. Test label positioning avoids going off-screen\n5. Test FPS counter displays correctly\n6. Verify canvas clears between frames\n7. Test screenshot download functionality",
+        "priority": "medium",
+        "dependencies": [
+          "8"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "10",
+        "title": "Build main detection page with UI controls and real-time inference loop",
+        "description": "Create the main page integrating all components with shadcn/ui controls for model selection, class filtering, threshold adjustment, and real-time detection loop",
+        "details": "1. Create `app/page.tsx` with main detection interface:\n   - Video display area with canvas overlay\n   - Control panel using shadcn/ui components:\n     * Select for model switching (YOLO11-N/S/M)\n     * Multi-select or checkboxes for class filtering (person, car, etc.)\n     * Sliders for confidence threshold (0.1-0.9, default 0.25)\n     * Slider for NMS IoU threshold (0.1-0.9, default 0.45)\n     * Button for Start/Stop detection\n     * Button for screenshot capture\n     * Button for video recording\n   - Performance metrics display (FPS, inference time)\n   \n2. Implement main inference loop:\n   ```typescript\n   async function detectionLoop() {\n     if (!running || !videoRef.current || !session) return;\n     \n     const startTime = performance.now();\n     \n     // Preprocess\n     const preprocessed = preprocessImage(videoRef.current, preprocessCanvas.current!, 640, 640);\n     \n     // Run inference\n     const rawDetections = await runInference(session, preprocessed.tensor, confThreshold);\n     \n     // Apply NMS\n     const nmsDetections = applyNMS(rawDetections, iouThreshold);\n     \n     // Transform coordinates and filter classes\n     const finalDetections = transformCoordinates(\n       nmsDetections,\n       preprocessed,\n       classNames,\n       allowedClasses\n     );\n     \n     // Draw results\n     drawDetections(overlayCanvas.current!, finalDetections, currentFps);\n     \n     // Update FPS\n     const endTime = performance.now();\n     updateFps(1000 / (endTime - startTime));\n     \n     // Next frame\n     requestAnimationFrame(detectionLoop);\n   }\n   ```\n   \n3. Add state management for all settings\n4. Implement model switching with loading states\n5. Add screenshot and recording functionality\n6. Style with Tailwind CSS and shadcn/ui for modern, responsive design",
+        "testStrategy": "1. Test full pipeline end-to-end with live webcam\n2. Verify model switching loads and uses new model correctly\n3. Test class filtering shows/hides correct detections\n4. Test threshold sliders update detection behavior in real-time\n5. Verify FPS counter updates accurately\n6. Test screenshot captures current frame with boxes\n7. Test video recording saves playable file\n8. Verify performance on target hardware (>15 FPS on YOLO11-N)\n9. Test error states (no camera, model load failure)\n10. Verify UI is responsive and controls are accessible",
+        "priority": "high",
+        "dependencies": [
+          "4",
+          "6",
+          "7",
+          "8",
+          "9"
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-01-11T06:52:01.151Z",
+      "taskCount": 10,
+      "completedCount": 1,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}
