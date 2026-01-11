@@ -39,3 +39,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pt
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# script generated files
+public/models
+public/data
