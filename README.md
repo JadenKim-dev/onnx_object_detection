@@ -29,17 +29,25 @@ This exports YOLOv11n, YOLOv11s, and YOLOv11m models to `public/models/` and gen
 
 ## Testing
 
-Run the test suite for exported ONNX models:
+### Python Tests (ONNX Models)
+
+Test exported ONNX models:
 
 ```bash
-# Run all tests
-pytest
-
-# Run with verbose output
-pytest tests/test_models.py -v
-
-# Skip slow performance tests
-pytest -m "not slow"
+pytest                          # Run all tests
+pytest tests/test_models.py -v  # Verbose output
+pytest -m "not slow"            # Skip performance tests
 ```
 
 **Note:** Ensure models are exported before running tests.
+
+### Frontend Tests (Vitest)
+
+Test React components and utilities:
+
+```bash
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:ui       # UI interface
+npm run test:coverage # Coverage report
+```
