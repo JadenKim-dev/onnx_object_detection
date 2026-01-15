@@ -38,6 +38,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.2",
     "@vitest/ui": "^4.0.16",
+    "@webgpu/types": "^0.1.69",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "happy-dom": "^20.1.0",
