@@ -43,3 +43,24 @@ export interface BrowserCapabilities {
   simd: boolean;
   threads: boolean;
 }
+
+export interface RawDetection {
+  classId: number;
+  confidence: number;
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+}
+
+export interface InferenceResult {
+  detections: RawDetection[];
+  inferenceTimeMs: number;
+  numCandidates: number;
+  numFiltered: number;
+}
+
+export interface InferenceConfig {
+  confidenceThreshold: number;
+  maxDetections?: number;
+}
