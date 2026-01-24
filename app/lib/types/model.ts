@@ -68,3 +68,9 @@ export interface InferenceConfig {
   applyNMS?: boolean;
   iouThreshold?: number;
 }
+
+export type {
+  FinalDetection,
+  PostProcessConfig,
+  TransformMetadata,
+} from '../postprocess';
