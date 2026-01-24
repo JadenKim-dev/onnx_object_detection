@@ -8,7 +8,7 @@ import type { ModelSession } from '@/app/lib/types/model';
 import * as ort from 'onnxruntime-web';
 
 vi.mock('onnxruntime-web', () => ({
-  Tensor: vi.fn().mockImplementation(function(
+  Tensor: vi.fn().mockImplementation(function (
     this: { type: string; data: Float32Array; dims: number[] },
     type: string,
     data: Float32Array,
@@ -116,7 +116,7 @@ describe('inference', () => {
 
     it('should skip invalid boxes (negative dimensions or out-of-bounds)', () => {
       const outputData = new Float32Array(84 * 8400);
-      
+
       // Test negative width
       outputData[0] = 320;
       outputData[8400] = 240;
@@ -256,9 +256,125 @@ describe('inference', () => {
 
       mockModelSession.session.run = vi.fn().mockResolvedValue({});
 
-      await expect(
-        runInference(mockModelSession, tensorData)
-      ).rejects.toThrow('Output tensor');
+      await expect(runInference(mockModelSession, tensorData)).rejects.toThrow(
+        'Output tensor'
+      );
+    });
+  });
+
+  describe('NMS integration', () => {
+    let mockModelSession: ModelSession;
+
+    beforeEach(() => {
+      mockModelSession = {
+        session: {
+          run: vi.fn(),
+        } as unknown as ModelSession['session'],
+        metadata: {} as ModelSession['metadata'],
+        executionProvider: 'wasm',
+        inputName: 'images',
+        outputName: 'output0',
+        inputShape: [1, 3, 640, 640],
+        outputShape: [1, 84, 8400],
+      };
+    });
+
+    it('should apply NMS by default', async () => {
+      const tensorData = new Float32Array(3 * 640 * 640);
+      const outputData = new Float32Array(84 * 8400);
+
+      outputData[0] = 320;
+      outputData[8400] = 320;
+      outputData[8400 * 2] = 50;
+      outputData[8400 * 3] = 50;
+      outputData[8400 * 4] = 0.9;
+
+      outputData[1] = 330;
+      outputData[8400 + 1] = 330;
+      outputData[8400 * 2 + 1] = 50;
+      outputData[8400 * 3 + 1] = 50;
+      outputData[8400 * 4 + 1] = 0.8;
+
+      mockModelSession.session.run = vi.fn().mockResolvedValue({
+        output0: {
+          data: outputData,
+          dims: [1, 84, 8400],
+        },
+      });
+
+      const result = await runInference(mockModelSession, tensorData);
+
+      expect(result.detections.length).toBeLessThanOrEqual(2);
+      expect(result.numAfterNMS).toBeDefined();
+    });
+
+    it('should allow disabling NMS', async () => {
+      const tensorData = new Float32Array(3 * 640 * 640);
+      const outputData = new Float32Array(84 * 8400);
+
+      outputData[0] = 320;
+      outputData[8400] = 320;
+      outputData[8400 * 2] = 50;
+      outputData[8400 * 3] = 50;
+      outputData[8400 * 4] = 0.9;
+
+      outputData[1] = 330;
+      outputData[8400 + 1] = 330;
+      outputData[8400 * 2 + 1] = 50;
+      outputData[8400 * 3 + 1] = 50;
+      outputData[8400 * 4 + 1] = 0.8;
+
+      mockModelSession.session.run = vi.fn().mockResolvedValue({
+        output0: {
+          data: outputData,
+          dims: [1, 84, 8400],
+        },
+      });
+
+      const result = await runInference(mockModelSession, tensorData, {
+        applyNMS: false,
+      });
+
+      expect(result.detections).toHaveLength(2);
+      expect(result.numAfterNMS).toBeUndefined();
+    });
+
+    it('should respect custom IoU threshold', async () => {
+      const tensorData = new Float32Array(3 * 640 * 640);
+      const outputData = new Float32Array(84 * 8400);
+
+      outputData[0] = 320;
+      outputData[8400] = 320;
+      outputData[8400 * 2] = 100;
+      outputData[8400 * 3] = 100;
+      outputData[8400 * 4] = 0.9;
+
+      outputData[1] = 340;
+      outputData[8400 + 1] = 340;
+      outputData[8400 * 2 + 1] = 100;
+      outputData[8400 * 3 + 1] = 100;
+      outputData[8400 * 4 + 1] = 0.8;
+
+      mockModelSession.session.run = vi.fn().mockResolvedValue({
+        output0: {
+          data: outputData,
+          dims: [1, 84, 8400],
+        },
+      });
+
+      const permissiveResult = await runInference(
+        mockModelSession,
+        tensorData,
+        {
+          iouThreshold: 0.8,
+        }
+      );
+      expect(permissiveResult.detections.length).toBeGreaterThanOrEqual(1);
+
+      const strictResult = await runInference(mockModelSession, tensorData, {
+        iouThreshold: 0.3,
+      });
+      expect(strictResult.detections).toHaveLength(1);
     });
   });
 });

@@ -1,31 +1,35 @@
 import * as ort from 'onnxruntime-web';
+import { pipe, range, map, filter, firstBy } from 'remeda';
 import type {
   ModelSession,
   RawDetection,
   InferenceResult,
   InferenceConfig,
 } from './types/model';
+import { applyNMS } from './nms';
 
 const DEFAULT_CONFIG: InferenceConfig = {
   confidenceThreshold: 0.25,
+  applyNMS: true,
+  iouThreshold: 0.45,
 };
 
 /**
  * Validates that the input tensor has the correct size for the model.
- * 
+ *
  * @param tensorData - The Float32Array containing preprocessed image data
  * @param expectedShape - Expected tensor shape as [channels, height, width]. Defaults to [3, 640, 640]
  * @throws {Error} If tensor size doesn't match expected dimensions
  */
 export function validateInputTensor(
   tensorData: Float32Array,
-  expectedShape: [number, number, number] = [3, 640, 640]
+  expectedShape: [number, number, number] = [3, 640, 640],
 ): void {
   const expectedSize = expectedShape[0] * expectedShape[1] * expectedShape[2];
 
   if (tensorData.length !== expectedSize) {
     throw new Error(
-      `[Inference] Invalid input tensor size: expected ${expectedSize}, got ${tensorData.length}`
+      `[Inference] Invalid input tensor size: expected ${expectedSize}, got ${tensorData.length}`,
     );
   }
 }
@@ -37,13 +41,21 @@ function normalizeOutputShape(dims: readonly number[]): {
 } {
   if (dims.length === 3) {
     const [batch, features, predictions] = dims;
-    return { batchSize: batch, numFeatures: features, numPredictions: predictions };
+    return {
+      batchSize: batch,
+      numFeatures: features,
+      numPredictions: predictions,
+    };
   } else if (dims.length === 4) {
     const [batch, _, features, predictions] = dims;
-    return { batchSize: batch, numFeatures: features, numPredictions: predictions };
+    return {
+      batchSize: batch,
+      numFeatures: features,
+      numPredictions: predictions,
+    };
   } else {
     throw new Error(
-      `[Inference] Unexpected output shape: [${dims.join(', ')}]. Expected [1, 84, 8400] or [1, 1, 84, 8400]`
+      `[Inference] Unexpected output shape: [${dims.join(', ')}]. Expected [1, 84, 8400] or [1, 1, 84, 8400]`,
     );
   }
 }
@@ -59,7 +71,7 @@ const IMAGE_SIZE = 640;
 function extractBoundingBox(
   outputData: Float32Array,
   predictionIndex: number,
-  numPredictions: number
+  numPredictions: number,
 ): { cx: number; cy: number; width: number; height: number } {
   return {
     cx: outputData[0 * numPredictions + predictionIndex],
@@ -94,32 +106,32 @@ function isValidBoundingBox(bbox: {
 function findBestClass(
   outputData: Float32Array,
   predictionIndex: number,
-  numPredictions: number
+  numPredictions: number,
 ): { classId: number; confidence: number } {
-  let maxScore = 0;
-  let maxClassId = 0;
+  const result = pipe(
+    range(0, NUM_CLASSES),
+    map((classIdx) => {
+      const scoreIdx =
+        (NUM_BBOX_COORDS + classIdx) * numPredictions + predictionIndex;
+      return {
+        classId: classIdx,
+        confidence: outputData[scoreIdx],
+      };
+    }),
+    firstBy([(item) => item.confidence, 'desc']),
+  );
 
-  for (let classIdx = 0; classIdx < NUM_CLASSES; classIdx++) {
-    const scoreIdx = (NUM_BBOX_COORDS + classIdx) * numPredictions + predictionIndex;
-    const score = outputData[scoreIdx];
-
-    if (score > maxScore) {
-      maxScore = score;
-      maxClassId = classIdx;
-    }
-  }
-
-  return { classId: maxClassId, confidence: maxScore };
+  return result ?? { classId: 0, confidence: 0 };
 }
 
 /**
  * Parses raw YOLO model output into structured detection objects.
- * 
+ *
  * Processes the model's output tensor to extract bounding boxes and class predictions.
  * The YOLO output format is [batch, 84, 8400] where:
  * - 84 features = 4 bbox coordinates (cx, cy, w, h) + 80 class scores
  * - 8400 predictions = anchor points across the feature pyramid
- * 
+ *
  * @param outputData - Raw Float32Array from model output tensor
  * @param outputShape - Shape of the output tensor (supports [1, 84, 8400] or [1, 1, 84, 8400])
  * @param confidenceThreshold - Minimum confidence score to include a detection (0.0-1.0)
@@ -129,7 +141,7 @@ function findBestClass(
 export function parseYoloOutput(
   outputData: Float32Array,
   outputShape: number[],
-  confidenceThreshold: number
+  confidenceThreshold: number,
 ): RawDetection[] {
   const { numFeatures, numPredictions } = normalizeOutputShape(outputShape);
 
@@ -137,35 +149,40 @@ export function parseYoloOutput(
     throw new Error(`[Inference] Expected 84 features, got ${numFeatures}`);
   }
 
-  const detections: RawDetection[] = [];
+  return pipe(
+    range(0, numPredictions),
+    map((i) => {
+      const bbox = extractBoundingBox(outputData, i, numPredictions);
+      const { classId, confidence } = findBestClass(
+        outputData,
+        i,
+        numPredictions,
+      );
 
-  for (let i = 0; i < numPredictions; i++) {
-    const bbox = extractBoundingBox(outputData, i, numPredictions);
-    
-    if (!isValidBoundingBox(bbox)) {
-      continue;
-    }
-
-    const { classId, confidence } = findBestClass(outputData, i, numPredictions);
-
-    if (confidence >= confidenceThreshold) {
-      detections.push({
+      return {
+        bbox,
         classId,
         confidence,
-        ...bbox,
-      });
-    }
-  }
-
-  return detections;
+      };
+    }),
+    filter(
+      ({ bbox, confidence }) =>
+        isValidBoundingBox(bbox) && confidence >= confidenceThreshold,
+    ),
+    map(({ bbox, classId, confidence }) => ({
+      classId,
+      confidence,
+      ...bbox,
+    })),
+  );
 }
 
 /**
  * Runs object detection inference on preprocessed image data.
- * 
+ *
  * Executes the ONNX model on the provided tensor data and returns structured detection results.
  * The function handles tensor creation, model execution, output parsing, and performance timing.
- * 
+ *
  * @param modelSession - Active ONNX Runtime session with model metadata
  * @param tensorData - Preprocessed image data as Float32Array in CHW format (channels, height, width)
  * @param config - Optional inference configuration to override defaults
@@ -177,7 +194,7 @@ export function parseYoloOutput(
 export async function runInference(
   modelSession: ModelSession,
   tensorData: Float32Array,
-  config?: Partial<InferenceConfig>
+  config?: Partial<InferenceConfig>,
 ): Promise<InferenceResult> {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
@@ -188,7 +205,7 @@ export async function runInference(
   const inputTensor = new ort.Tensor(
     'float32',
     tensorData,
-    modelSession.inputShape
+    modelSession.inputShape,
   );
 
   const feeds = { [modelSession.inputName]: inputTensor };
@@ -197,18 +214,26 @@ export async function runInference(
   const outputTensor = results[modelSession.outputName];
   if (!outputTensor) {
     throw new Error(
-      `[Inference] Output tensor '${modelSession.outputName}' not found`
+      `[Inference] Output tensor '${modelSession.outputName}' not found`,
     );
   }
 
   const outputData = outputTensor.data as Float32Array;
   const outputShape = Array.from(outputTensor.dims);
 
-  const detections = parseYoloOutput(
+  let detections = parseYoloOutput(
     outputData,
     outputShape,
-    finalConfig.confidenceThreshold
+    finalConfig.confidenceThreshold,
   );
+  let numAfterNMS: number | undefined;
+
+  if (finalConfig.applyNMS) {
+    detections = applyNMS(detections, {
+      iouThreshold: finalConfig.iouThreshold,
+    });
+    numAfterNMS = detections.length;
+  }
 
   const filteredDetections = finalConfig.maxDetections
     ? detections.slice(0, finalConfig.maxDetections)
@@ -220,6 +245,6 @@ export async function runInference(
     detections: filteredDetections,
     inferenceTimeMs,
     numCandidates: 8400,
-    numFiltered: filteredDetections.length,
+    numAfterNMS,
   };
 }

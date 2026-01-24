@@ -53,14 +53,18 @@ export interface RawDetection {
   height: number;
 }
 
+export type { Detection } from '../nms';
+
 export interface InferenceResult {
   detections: RawDetection[];
   inferenceTimeMs: number;
   numCandidates: number;
-  numFiltered: number;
+  numAfterNMS?: number;
 }
 
 export interface InferenceConfig {
   confidenceThreshold: number;
   maxDetections?: number;
+  applyNMS?: boolean;
+  iouThreshold?: number;
 }
