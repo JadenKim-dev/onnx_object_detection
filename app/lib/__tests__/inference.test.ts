@@ -12,7 +12,7 @@ vi.mock('onnxruntime-web', () => ({
     this: { type: string; data: Float32Array; dims: number[] },
     type: string,
     data: Float32Array,
-    dims: number[]
+    dims: number[],
   ) {
     this.type = type;
     this.data = data;
@@ -31,7 +31,7 @@ describe('inference', () => {
     it('should throw on incorrect tensor size', () => {
       const tensor = new Float32Array(100);
       expect(() => validateInputTensor(tensor, [3, 640, 640])).toThrow(
-        'Invalid input tensor size'
+        'Invalid input tensor size',
       );
     });
   });
@@ -204,7 +204,7 @@ describe('inference', () => {
       expect(result).toHaveProperty('detections');
       expect(result).toHaveProperty('inferenceTimeMs');
       expect(result).toHaveProperty('numCandidates', 8400);
-      expect(result).toHaveProperty('numFiltered');
+      expect(result).toHaveProperty('numAfterNMS');
       expect(result.inferenceTimeMs).toBeGreaterThanOrEqual(0);
       expect(Array.isArray(result.detections)).toBe(true);
     });
@@ -247,7 +247,7 @@ describe('inference', () => {
       const invalidTensor = new Float32Array(100);
 
       await expect(
-        runInference(mockModelSession, invalidTensor)
+        runInference(mockModelSession, invalidTensor),
       ).rejects.toThrow('Invalid input tensor');
     });
 
@@ -257,7 +257,7 @@ describe('inference', () => {
       mockModelSession.session.run = vi.fn().mockResolvedValue({});
 
       await expect(runInference(mockModelSession, tensorData)).rejects.toThrow(
-        'Output tensor'
+        'Output tensor',
       );
     });
   });
@@ -367,7 +367,7 @@ describe('inference', () => {
         tensorData,
         {
           iouThreshold: 0.8,
-        }
+        },
       );
       expect(permissiveResult.detections.length).toBeGreaterThanOrEqual(1);
 
